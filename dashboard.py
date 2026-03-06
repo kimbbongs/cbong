@@ -6,18 +6,27 @@
 실행 방법:
     ./venv/bin/python dashboard.py
 
-브라우저에서 http://localhost:5000 접속
+브라우저에서 http://서버주소:8502 접속
 """
 
 import json
+from pathlib import Path
 from flask import Flask, render_template
 
 app = Flask(__name__)
 
-# JSON 파일에서 메시지 로드
+DATA_FILE = Path(__file__).parent / "telegram_messages.json"
+
+
 def load_messages():
-    with open("telegram_messages.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+    """JSON 파일에서 메시지를 로드합니다. 파일이 없거나 깨지면 빈 리스트를 반환합니다."""
+    if not DATA_FILE.exists():
+        return []
+    try:
+        return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+
 
 @app.route("/")
 def index():
@@ -37,5 +46,6 @@ def index():
 
     return render_template("dashboard.html", messages=messages, stats=stats)
 
+
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=8502)
+    app.run(host="0.0.0.0", port=8502)

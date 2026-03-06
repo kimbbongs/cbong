@@ -7,37 +7,51 @@
 1. pip install telethon 으로 라이브러리 설치
 2. https://my.telegram.org 에 접속하여 로그인
 3. "API development tools" 메뉴에서 앱을 생성
-4. 생성된 api_id와 api_hash를 아래 설정에 입력
+4. .env 파일에 API_ID, API_HASH 등을 입력
 """
 
 import json
 import asyncio
-from datetime import datetime
+import os
+from pathlib import Path
 from telethon import TelegramClient
 
+
+def load_env():
+    """프로젝트 루트의 .env 파일에서 환경변수를 읽어옵니다."""
+    env_path = Path(__file__).parent / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
+# .env 파일 로드
+load_env()
+
 # ============================================================
-# [설정] 여기에 본인의 정보를 입력하세요
+# [설정] .env 파일에서 읽어옵니다
 # ============================================================
-
-# my.telegram.org에서 발급받은 API 인증 정보
-API_ID = 32148474
-API_HASH = "63f288405cb66c3fb9997b251c7f0bb7"
-
-# 수집할 채널의 username 또는 링크
-# 예: "https://t.me/channel_name" 또는 "@channel_name" 또는 "channel_name"
-CHANNEL = "https://t.me/HanaResearch"
-
-# 수집할 메시지 개수 (None으로 설정하면 전체 메시지 수집)
-MESSAGE_LIMIT = 100
+API_ID = int(os.environ.get("TELEGRAM_API_ID", "0"))
+API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
+CHANNEL = os.environ.get("TELEGRAM_CHANNEL", "")
+MESSAGE_LIMIT = int(os.environ.get("TELEGRAM_MESSAGE_LIMIT", "100"))
 
 # 저장할 JSON 파일 이름
 OUTPUT_FILE = "telegram_messages.json"
 
-# ============================================================
-
 
 async def collect_messages():
     """텔레그램 채널에서 메시지를 수집하는 메인 함수"""
+
+    # 필수 설정값 확인
+    if not API_ID or not API_HASH or not CHANNEL:
+        print("오류: .env 파일에 TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_CHANNEL을 설정해주세요.")
+        return
 
     # 텔레그램 클라이언트 생성 (세션 파일이 자동으로 만들어짐)
     client = TelegramClient("session", API_ID, API_HASH)
