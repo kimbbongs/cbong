@@ -58,6 +58,17 @@ def parse_args() -> argparse.Namespace:
         default=os.getenv("TELEGRAM_SESSION_FILE", DEFAULT_SESSION_FILE),
         help="텔레그램 로그인 세션 파일 경로입니다.",
     )
+    parser.add_argument(
+        "--pick-dialog",
+        action="store_true",
+        default=os.getenv("TELEGRAM_PICK_DIALOG", "false").lower() == "true",
+        help="현재 계정이 참여 중인 채널/그룹 목록을 보여주고 번호로 선택합니다.",
+    )
+    parser.add_argument(
+        "--list-dialogs",
+        action="store_true",
+        help="현재 계정이 참여 중인 채널/그룹 목록만 출력하고 종료합니다.",
+    )
     return parser.parse_args()
 
 
@@ -119,6 +130,37 @@ def describe_entity(entity: Any) -> tuple[str, str]:
     return label, title or label
 
 
+def describe_dialog(dialog: Any) -> tuple[Any, str, str, str, str]:
+    entity = dialog.entity
+    label, title = describe_entity(entity)
+    kind = "channel" if dialog.is_channel and getattr(entity, "broadcast", False) else "group"
+    visibility = "public" if getattr(entity, "username", None) else "private"
+    return entity, label, dialog.name or title, kind, visibility
+
+
+def print_dialog_options(dialogs: list[tuple[Any, str, str, str, str]]) -> None:
+    print("현재 계정이 참여 중인 채널/그룹 목록입니다.")
+    for index, dialog in enumerate(dialogs, start=1):
+        _, label, title, kind, visibility = dialog
+        print(f"{index:>3}. [{visibility}/{kind}] {title} ({label})")
+
+
+def choose_dialog_option(dialogs: list[tuple[Any, str, str, str, str]]) -> tuple[Any, str, str]:
+    while True:
+        raw_value = input("수집할 번호를 입력하세요. 취소하려면 q를 입력하세요: ").strip()
+        if raw_value.lower() == "q":
+            raise ValueError("채널/그룹 선택이 취소되었습니다.")
+        if not raw_value.isdigit():
+            print("숫자 번호를 입력하세요.")
+            continue
+
+        index = int(raw_value)
+        if 1 <= index <= len(dialogs):
+            entity, label, title, _, _ = dialogs[index - 1]
+            return entity, label, title
+        print("목록 안의 번호를 입력하세요.")
+
+
 async def find_joined_dialog(client: TelegramClient, value: str) -> Any | None:
     lookup = value.strip().lower().lstrip("@")
     async for dialog in client.iter_dialogs():
@@ -134,6 +176,16 @@ async def find_joined_dialog(client: TelegramClient, value: str) -> Any | None:
         if lookup in candidates:
             return entity
     return None
+
+
+async def load_collectable_dialogs(client: TelegramClient) -> list[tuple[Any, str, str, str, str]]:
+    dialogs: list[tuple[Any, str, str, str, str]] = []
+    async for dialog in client.iter_dialogs():
+        if not (dialog.is_channel or dialog.is_group):
+            continue
+        dialogs.append(describe_dialog(dialog))
+    dialogs.sort(key=lambda dialog: (dialog[2].lower(), dialog[1].lower()))
+    return dialogs
 
 
 async def resolve_target(client: TelegramClient, raw_value: str) -> tuple[Any, str, str]:
@@ -170,6 +222,31 @@ async def resolve_target(client: TelegramClient, raw_value: str) -> tuple[Any, s
     return entity, label, title
 
 
+async def resolve_target_from_args(
+    client: TelegramClient,
+    channel_value: str | None,
+    pick_dialog: bool,
+    list_dialogs: bool,
+) -> tuple[Any, str, str] | None:
+    dialogs: list[tuple[Any, str, str, str, str]] = []
+    if pick_dialog or list_dialogs:
+        dialogs = await load_collectable_dialogs(client)
+        if not dialogs:
+            raise ValueError("현재 계정이 참여 중인 채널/그룹이 없습니다.")
+        print_dialog_options(dialogs)
+        if list_dialogs and not pick_dialog:
+            return None
+        if pick_dialog:
+            return choose_dialog_option(dialogs)
+
+    normalized_input = (channel_value or "").strip()
+    if not normalized_input:
+        raise ValueError(
+            "--channel 값을 넣거나 TELEGRAM_PICK_DIALOG=true 또는 --pick-dialog 로 목록 선택을 사용하세요."
+        )
+    return await resolve_target(client, normalized_input)
+
+
 async def login_if_needed(client: TelegramClient, phone: str) -> None:
     await client.connect()
     if await client.is_user_authorized():
@@ -197,7 +274,7 @@ def convert_message(message: Any) -> dict[str, Any]:
     }
 
 
-async def collect_messages(args: argparse.Namespace) -> Path:
+async def collect_messages(args: argparse.Namespace) -> Path | None:
     load_dotenv_file(Path(".env"))
 
     api_id = int(get_env("TELEGRAM_API_ID"))
@@ -213,7 +290,15 @@ async def collect_messages(args: argparse.Namespace) -> Path:
     await login_if_needed(client, phone)
 
     try:
-        channel, channel_label, channel_title = await resolve_target(client, args.channel)
+        resolved_target = await resolve_target_from_args(
+            client=client,
+            channel_value=args.channel,
+            pick_dialog=args.pick_dialog,
+            list_dialogs=args.list_dialogs,
+        )
+        if resolved_target is None:
+            return None
+        channel, channel_label, channel_title = resolved_target
         print(f"채널 '{channel_title}' 에서 메시지를 수집합니다...")
 
         messages: list[dict[str, Any]] = []
@@ -242,7 +327,9 @@ async def collect_messages(args: argparse.Namespace) -> Path:
 def main() -> None:
     args = parse_args()
     try:
-        asyncio.run(collect_messages(args))
+        output_path = asyncio.run(collect_messages(args))
+        if output_path is not None:
+            print(f"저장 완료: {output_path}")
     except Exception as error:
         print(f"오류: {error}")
 
