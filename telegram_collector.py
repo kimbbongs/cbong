@@ -325,6 +325,7 @@ async def collect_messages(args: argparse.Namespace) -> Path | None:
 
 
 def main() -> None:
+    load_dotenv_file(Path(".env"))
     args = parse_args()
     try:
         output_path = asyncio.run(collect_messages(args))
