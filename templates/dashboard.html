@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Dashboard - HanaResearch</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f1923;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a2a3a, #2a3a4a);
+            padding: 24px 32px;
+            border-bottom: 1px solid #2a3a4a;
+        }
+
+        .header h1 {
+            font-size: 22px;
+            color: #4fc3f7;
+        }
+
+        .header p {
+            color: #90a4ae;
+            font-size: 13px;
+            margin-top: 4px;
+        }
+
+        /* 통계 카드 */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            padding: 24px 32px;
+        }
+
+        .stat-card {
+            background: #1a2a3a;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #2a3a4a;
+        }
+
+        .stat-card .label {
+            font-size: 12px;
+            color: #90a4ae;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #4fc3f7;
+            margin-top: 4px;
+        }
+
+        /* 검색/필터 */
+        .controls {
+            padding: 0 32px 16px;
+        }
+
+        .search-box {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid #2a3a4a;
+            background: #1a2a3a;
+            color: #e0e0e0;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .search-box:focus {
+            border-color: #4fc3f7;
+        }
+
+        .search-box::placeholder {
+            color: #607d8b;
+        }
+
+        /* 메시지 목록 */
+        .messages {
+            padding: 0 32px 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .msg-card {
+            background: #1a2a3a;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #2a3a4a;
+            transition: border-color 0.2s;
+        }
+
+        .msg-card:hover {
+            border-color: #4fc3f7;
+        }
+
+        .msg-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .msg-date {
+            font-size: 12px;
+            color: #4fc3f7;
+            font-weight: 600;
+        }
+
+        .msg-badges {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .badge {
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+
+        .badge-views {
+            background: rgba(79, 195, 247, 0.15);
+            color: #4fc3f7;
+        }
+
+        .badge-media {
+            background: rgba(129, 199, 132, 0.15);
+            color: #81c784;
+        }
+
+        .msg-text {
+            font-size: 14px;
+            color: #cfd8dc;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 200px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .msg-text.expanded {
+            max-height: none;
+        }
+
+        .msg-text:not(.expanded)::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 40px;
+            background: linear-gradient(transparent, #1a2a3a);
+        }
+
+        .msg-text.short::after {
+            display: none;
+        }
+
+        .expand-btn {
+            margin-top: 8px;
+            background: none;
+            border: 1px solid #2a3a4a;
+            color: #4fc3f7;
+            padding: 4px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .expand-btn:hover {
+            background: rgba(79, 195, 247, 0.1);
+        }
+
+        .msg-id {
+            font-size: 11px;
+            color: #546e7a;
+        }
+
+        .no-results {
+            text-align: center;
+            color: #607d8b;
+            padding: 40px;
+            font-size: 16px;
+        }
+
+        a {
+            color: #4fc3f7;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>HanaResearch Telegram Dashboard</h1>
+    <p>수집된 텔레그램 채널 메시지 대시보드</p>
+</div>
+
+<!-- 통계 카드 -->
+<div class="stats">
+    <div class="stat-card">
+        <div class="label">총 메시지</div>
+        <div class="value">{{ stats.total }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">총 조회수</div>
+        <div class="value">{{ "{:,}".format(stats.total_views) }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">평균 조회수</div>
+        <div class="value">{{ "{:,}".format(stats.avg_views) }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">미디어 포함</div>
+        <div class="value">{{ stats.media_count }}</div>
+    </div>
+</div>
+
+<!-- 검색 -->
+<div class="controls">
+    <input type="text" class="search-box" id="searchInput"
+           placeholder="메시지 검색... (키워드를 입력하세요)" oninput="filterMessages()">
+</div>
+
+<!-- 메시지 목록 -->
+<div class="messages" id="messageList">
+    {% for msg in messages %}
+    <div class="msg-card" data-text="{{ msg.text | lower }}">
+        <div class="msg-meta">
+            <span class="msg-date">{{ msg.date[:10] }} {{ msg.date[11:16] }} (UTC)</span>
+            <div class="msg-badges">
+                {% if msg.views %}
+                <span class="badge badge-views">{{ "{:,}".format(msg.views) }} views</span>
+                {% endif %}
+                {% if msg.has_media %}
+                <span class="badge badge-media">{{ msg.media_type }}</span>
+                {% endif %}
+                <span class="msg-id">#{{ msg.id }}</span>
+            </div>
+        </div>
+        <div class="msg-text" id="text-{{ msg.id }}">{{ msg.text }}</div>
+        <button class="expand-btn" id="btn-{{ msg.id }}" onclick="toggleExpand({{ msg.id }})">더보기</button>
+    </div>
+    {% endfor %}
+    <div class="no-results" id="noResults" style="display:none;">검색 결과가 없습니다.</div>
+</div>
+
+<script>
+    // 짧은 메시지는 더보기 버튼 숨기기
+    document.querySelectorAll('.msg-text').forEach(el => {
+        if (el.scrollHeight <= 200) {
+            el.classList.add('short', 'expanded');
+            const btn = document.getElementById('btn-' + el.id.replace('text-', ''));
+            if (btn) btn.style.display = 'none';
+        }
+    });
+
+    // 더보기/접기 토글
+    function toggleExpand(id) {
+        const text = document.getElementById('text-' + id);
+        const btn = document.getElementById('btn-' + id);
+        text.classList.toggle('expanded');
+        btn.textContent = text.classList.contains('expanded') ? '접기' : '더보기';
+    }
+
+    // 검색 필터
+    function filterMessages() {
+        const query = document.getElementById('searchInput').value.toLowerCase();
+        const cards = document.querySelectorAll('.msg-card');
+        let visible = 0;
+
+        cards.forEach(card => {
+            const text = card.getAttribute('data-text');
+            const match = !query || text.includes(query);
+            card.style.display = match ? '' : 'none';
+            if (match) visible++;
+        });
+
+        document.getElementById('noResults').style.display = visible === 0 ? '' : 'none';
+    }
+</script>
+
+</body>
+</html>
