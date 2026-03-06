@@ -1,114 +1,173 @@
 """
 텔레그램 채널 메시지 수집기
 ==========================
-텔레그램 채널의 메시지를 수집해서 JSON 파일로 저장하는 스크립트입니다.
 
 사전 준비:
-1. pip install telethon 으로 라이브러리 설치
+1. pip install -r requirements.txt
 2. https://my.telegram.org 에 접속하여 로그인
 3. "API development tools" 메뉴에서 앱을 생성
 4. .env 파일에 API_ID, API_HASH 등을 입력
 """
 
-import json
+from __future__ import annotations
+
+import argparse
 import asyncio
+import json
 import os
 from pathlib import Path
+from typing import Any
+
 from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError
 
 
-def load_env():
-    """프로젝트 루트의 .env 파일에서 환경변수를 읽어옵니다."""
-    env_path = Path(__file__).parent / ".env"
-    if not env_path.exists():
+DEFAULT_OUTPUT_FILE = "data/telegram_messages.json"
+DEFAULT_SESSION_FILE = "data/telegram_session"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="텔레그램 채널 메시지를 JSON 파일로 저장합니다."
+    )
+    parser.add_argument(
+        "--channel",
+        default=os.getenv("TELEGRAM_CHANNEL", "https://t.me/채널이름"),
+        help="수집할 채널 username 또는 링크입니다.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=int(os.getenv("TELEGRAM_MESSAGE_LIMIT", "100")),
+        help="가져올 메시지 개수입니다. 기본값은 100입니다.",
+    )
+    parser.add_argument(
+        "--output",
+        default=os.getenv("TELEGRAM_OUTPUT_FILE", DEFAULT_OUTPUT_FILE),
+        help="메시지를 저장할 JSON 파일 경로입니다.",
+    )
+    parser.add_argument(
+        "--session",
+        default=os.getenv("TELEGRAM_SESSION_FILE", DEFAULT_SESSION_FILE),
+        help="텔레그램 로그인 세션 파일 경로입니다.",
+    )
+    return parser.parse_args()
+
+
+def load_dotenv_file(path: Path) -> None:
+    if not path.exists():
         return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
+
         key, value = line.split("=", 1)
         os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 
-# .env 파일 로드
-load_env()
-
-# ============================================================
-# [설정] .env 파일에서 읽어옵니다
-# ============================================================
-API_ID = int(os.environ.get("TELEGRAM_API_ID", "0"))
-API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
-CHANNEL = os.environ.get("TELEGRAM_CHANNEL", "")
-MESSAGE_LIMIT = int(os.environ.get("TELEGRAM_MESSAGE_LIMIT", "100"))
-
-# 저장할 JSON 파일 이름
-OUTPUT_FILE = "telegram_messages.json"
+def get_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise ValueError(f"환경변수 {name} 값이 비어 있습니다.")
+    return value
 
 
-async def collect_messages():
-    """텔레그램 채널에서 메시지를 수집하는 메인 함수"""
+def normalize_channel(channel: str) -> str:
+    cleaned = channel.strip()
+    if cleaned.startswith("https://t.me/"):
+        cleaned = cleaned.removeprefix("https://t.me/")
+    if cleaned.startswith("http://t.me/"):
+        cleaned = cleaned.removeprefix("http://t.me/")
+    if not cleaned.startswith("@"):
+        cleaned = f"@{cleaned}"
+    return cleaned
 
-    # 필수 설정값 확인
-    if not API_ID or not API_HASH or not CHANNEL:
-        print("오류: .env 파일에 TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_CHANNEL을 설정해주세요.")
+
+async def login_if_needed(client: TelegramClient, phone: str) -> None:
+    await client.connect()
+    if await client.is_user_authorized():
         return
 
-    # 텔레그램 클라이언트 생성 (세션 파일이 자동으로 만들어짐)
-    client = TelegramClient("session", API_ID, API_HASH)
+    await client.send_code_request(phone)
+    code = input("텔레그램으로 받은 로그인 코드를 입력하세요: ").strip()
 
-    # 클라이언트 시작 (처음 실행 시 전화번호 인증 필요)
-    await client.start()
-    print("텔레그램에 연결되었습니다.")
-
-    # 채널 정보 가져오기
     try:
-        channel = await client.get_entity(CHANNEL)
+        await client.sign_in(phone=phone, code=code)
+    except SessionPasswordNeededError:
+        password = input("2단계 인증 비밀번호를 입력하세요: ").strip()
+        await client.sign_in(password=password)
+
+
+def convert_message(message: Any) -> dict[str, Any]:
+    return {
+        "id": message.id,
+        "date": message.date.isoformat() if message.date else None,
+        "text": message.text or "",
+        "sender_id": message.sender_id,
+        "views": message.views,
+        "has_media": message.media is not None,
+        "media_type": type(message.media).__name__ if message.media else None,
+    }
+
+
+async def collect_messages(args: argparse.Namespace) -> Path:
+    load_dotenv_file(Path(".env"))
+
+    api_id = int(get_env("TELEGRAM_API_ID"))
+    api_hash = get_env("TELEGRAM_API_HASH")
+    phone = get_env("TELEGRAM_PHONE")
+    channel_name = normalize_channel(args.channel)
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    session_path = Path(args.session)
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+
+    client = TelegramClient(str(session_path), api_id, api_hash)
+    await login_if_needed(client, phone)
+
+    try:
+        try:
+            channel = await client.get_entity(channel_name)
+        except ValueError as error:
+            raise ValueError(
+                f"채널을 찾지 못했습니다: {channel_name}. username 또는 링크를 다시 확인하세요."
+            ) from error
+
         print(f"채널 '{channel.title}' 에서 메시지를 수집합니다...")
-    except ValueError:
-        print(f"오류: '{CHANNEL}' 채널을 찾을 수 없습니다.")
-        print("채널 이름이 올바른지 확인해주세요.")
-        await client.disconnect()
-        return
 
-    # 메시지를 저장할 리스트
-    messages = []
+        messages: list[dict[str, Any]] = []
+        async for message in client.iter_messages(channel, limit=args.limit):
+            messages.append(convert_message(message))
 
-    # 채널의 메시지를 하나씩 가져오기
-    async for message in client.iter_messages(channel, limit=MESSAGE_LIMIT):
-        # 메시지 데이터를 딕셔너리로 정리
-        msg_data = {
-            # 메시지 고유 ID
-            "id": message.id,
-            # 메시지 전송 날짜 (문자열로 변환)
-            "date": message.date.isoformat() if message.date else None,
-            # 메시지 텍스트 내용
-            "text": message.text or "",
-            # 보낸 사람 ID
-            "sender_id": message.sender_id,
-            # 조회수 (있는 경우)
-            "views": message.views,
-            # 미디어 포함 여부
-            "has_media": message.media is not None,
-            # 미디어 종류 (사진, 동영상 등)
-            "media_type": type(message.media).__name__ if message.media else None,
+        messages.reverse()
+        payload = {
+            "channel": channel_name,
+            "channel_title": getattr(channel, "title", channel_name),
+            "message_count": len(messages),
+            "messages": messages,
         }
 
-        messages.append(msg_data)
-
-    print(f"총 {len(messages)}개의 메시지를 수집했습니다.")
-
-    # JSON 파일로 저장
-    # ensure_ascii=False: 한글이 깨지지 않도록 설정
-    # indent=2: 보기 좋게 들여쓰기
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(messages, f, ensure_ascii=False, indent=2)
-
-    print(f"'{OUTPUT_FILE}' 파일로 저장 완료!")
-
-    # 연결 종료
-    await client.disconnect()
+        output_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(f"총 {len(messages)}개의 메시지를 '{output_path}' 로 저장했습니다.")
+        return output_path
+    finally:
+        await client.disconnect()
 
 
-# 스크립트를 직접 실행할 때만 동작
+def main() -> None:
+    args = parse_args()
+    try:
+        asyncio.run(collect_messages(args))
+    except Exception as error:
+        print(f"오류: {error}")
+
+
 if __name__ == "__main__":
-    asyncio.run(collect_messages())
+    main()

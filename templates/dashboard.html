@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Telegram Dashboard - HanaResearch</title>
+    <title>{{ channel_title }}</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             background: #0f1923;
             color: #e0e0e0;
             line-height: 1.6;
@@ -31,7 +31,6 @@
             margin-top: 4px;
         }
 
-        /* 통계 카드 */
         .stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -39,11 +38,14 @@
             padding: 24px 32px;
         }
 
-        .stat-card {
+        .stat-card, .notice, .msg-card {
             background: #1a2a3a;
             border-radius: 12px;
-            padding: 20px;
             border: 1px solid #2a3a4a;
+        }
+
+        .stat-card {
+            padding: 20px;
         }
 
         .stat-card .label {
@@ -60,7 +62,12 @@
             margin-top: 4px;
         }
 
-        /* 검색/필터 */
+        .notice {
+            margin: 0 32px 24px;
+            padding: 18px 20px;
+            color: #ffcc80;
+        }
+
         .controls {
             padding: 0 32px 16px;
         }
@@ -80,11 +87,6 @@
             border-color: #4fc3f7;
         }
 
-        .search-box::placeholder {
-            color: #607d8b;
-        }
-
-        /* 메시지 목록 */
         .messages {
             padding: 0 32px 32px;
             display: flex;
@@ -93,10 +95,7 @@
         }
 
         .msg-card {
-            background: #1a2a3a;
-            border-radius: 12px;
             padding: 20px;
-            border: 1px solid #2a3a4a;
             transition: border-color 0.2s;
         }
 
@@ -142,6 +141,11 @@
             color: #81c784;
         }
 
+        .msg-id {
+            font-size: 11px;
+            color: #546e7a;
+        }
+
         .msg-text {
             font-size: 14px;
             color: #cfd8dc;
@@ -157,7 +161,7 @@
         }
 
         .msg-text:not(.expanded)::after {
-            content: '';
+            content: "";
             position: absolute;
             bottom: 0;
             left: 0;
@@ -181,40 +185,21 @@
             font-size: 12px;
         }
 
-        .expand-btn:hover {
-            background: rgba(79, 195, 247, 0.1);
-        }
-
-        .msg-id {
-            font-size: 11px;
-            color: #546e7a;
-        }
-
         .no-results {
             text-align: center;
             color: #607d8b;
             padding: 40px;
             font-size: 16px;
         }
-
-        a {
-            color: #4fc3f7;
-            text-decoration: none;
-        }
-
-        a:hover {
-            text-decoration: underline;
-        }
     </style>
 </head>
 <body>
 
 <div class="header">
-    <h1>HanaResearch Telegram Dashboard</h1>
-    <p>수집된 텔레그램 채널 메시지 대시보드</p>
+    <h1>{{ channel_title }}</h1>
+    <p>{{ channel_name }} | 데이터 파일: {{ data_file }}</p>
 </div>
 
-<!-- 통계 카드 -->
 <div class="stats">
     <div class="stat-card">
         <div class="label">총 메시지</div>
@@ -234,18 +219,23 @@
     </div>
 </div>
 
-<!-- 검색 -->
+{% if error %}
+<div class="notice">
+    {{ error }}
+</div>
+{% endif %}
+
+{% if messages %}
 <div class="controls">
     <input type="text" class="search-box" id="searchInput"
            placeholder="메시지 검색... (키워드를 입력하세요)" oninput="filterMessages()">
 </div>
 
-<!-- 메시지 목록 -->
 <div class="messages" id="messageList">
     {% for msg in messages %}
-    <div class="msg-card" data-text="{{ msg.text | lower }}">
+    <div class="msg-card" data-text="{{ (msg.text or '') | lower }}">
         <div class="msg-meta">
-            <span class="msg-date">{{ msg.date[:10] }} {{ msg.date[11:16] }} (UTC)</span>
+            <span class="msg-date">{{ (msg.date or "")[:10] }} {{ (msg.date or "")[11:16] }} (UTC)</span>
             <div class="msg-badges">
                 {% if msg.views %}
                 <span class="badge badge-views">{{ "{:,}".format(msg.views) }} views</span>
@@ -262,39 +252,46 @@
     {% endfor %}
     <div class="no-results" id="noResults" style="display:none;">검색 결과가 없습니다.</div>
 </div>
+{% endif %}
 
 <script>
-    // 짧은 메시지는 더보기 버튼 숨기기
-    document.querySelectorAll('.msg-text').forEach(el => {
+    document.querySelectorAll(".msg-text").forEach((el) => {
         if (el.scrollHeight <= 200) {
-            el.classList.add('short', 'expanded');
-            const btn = document.getElementById('btn-' + el.id.replace('text-', ''));
-            if (btn) btn.style.display = 'none';
+            el.classList.add("short", "expanded");
+            const btn = document.getElementById("btn-" + el.id.replace("text-", ""));
+            if (btn) {
+                btn.style.display = "none";
+            }
         }
     });
 
-    // 더보기/접기 토글
     function toggleExpand(id) {
-        const text = document.getElementById('text-' + id);
-        const btn = document.getElementById('btn-' + id);
-        text.classList.toggle('expanded');
-        btn.textContent = text.classList.contains('expanded') ? '접기' : '더보기';
+        const text = document.getElementById("text-" + id);
+        const btn = document.getElementById("btn-" + id);
+        text.classList.toggle("expanded");
+        btn.textContent = text.classList.contains("expanded") ? "접기" : "더보기";
     }
 
-    // 검색 필터
     function filterMessages() {
-        const query = document.getElementById('searchInput').value.toLowerCase();
-        const cards = document.querySelectorAll('.msg-card');
+        const searchInput = document.getElementById("searchInput");
+        if (!searchInput) {
+            return;
+        }
+
+        const query = searchInput.value.toLowerCase();
+        const cards = document.querySelectorAll(".msg-card");
         let visible = 0;
 
-        cards.forEach(card => {
-            const text = card.getAttribute('data-text');
+        cards.forEach((card) => {
+            const text = card.getAttribute("data-text");
             const match = !query || text.includes(query);
-            card.style.display = match ? '' : 'none';
-            if (match) visible++;
+            card.style.display = match ? "" : "none";
+            if (match) {
+                visible += 1;
+            }
         });
 
-        document.getElementById('noResults').style.display = visible === 0 ? '' : 'none';
+        document.getElementById("noResults").style.display = visible === 0 ? "" : "none";
     }
 </script>
 
