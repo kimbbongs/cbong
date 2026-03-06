@@ -19,7 +19,14 @@ from pathlib import Path
 from typing import Any
 
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import (
+    InviteHashExpiredError,
+    InviteHashInvalidError,
+    SessionPasswordNeededError,
+    UserAlreadyParticipantError,
+)
+from telethon.tl.functions.messages import CheckChatInviteRequest, ImportChatInviteRequest
+from telethon.tl.types import ChatInviteAlready
 
 
 DEFAULT_OUTPUT_FILE = "data/telegram_messages.json"
@@ -33,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--channel",
         default=os.getenv("TELEGRAM_CHANNEL", "https://t.me/채널이름"),
-        help="수집할 채널 username 또는 링크입니다.",
+        help="수집할 채널 username, 공개 링크, 비공개 초대 링크입니다.",
     )
     parser.add_argument(
         "--limit",
@@ -75,14 +82,92 @@ def get_env(name: str) -> str:
 
 
 def normalize_channel(channel: str) -> str:
-    cleaned = channel.strip()
+    cleaned = channel.strip().rstrip("/")
     if cleaned.startswith("https://t.me/"):
         cleaned = cleaned.removeprefix("https://t.me/")
     if cleaned.startswith("http://t.me/"):
         cleaned = cleaned.removeprefix("http://t.me/")
+    if cleaned.startswith("t.me/"):
+        cleaned = cleaned.removeprefix("t.me/")
     if not cleaned.startswith("@"):
         cleaned = f"@{cleaned}"
     return cleaned
+
+
+def extract_invite_hash(channel: str) -> str | None:
+    cleaned = channel.strip().rstrip("/")
+    prefixes = (
+        "https://t.me/+",
+        "http://t.me/+",
+        "t.me/+",
+        "+",
+        "https://t.me/joinchat/",
+        "http://t.me/joinchat/",
+        "t.me/joinchat/",
+        "joinchat/",
+    )
+    for prefix in prefixes:
+        if cleaned.startswith(prefix):
+            return cleaned.removeprefix(prefix)
+    return None
+
+
+def describe_entity(entity: Any) -> tuple[str, str]:
+    username = getattr(entity, "username", None)
+    title = getattr(entity, "title", None) or getattr(entity, "first_name", None)
+    label = f"@{username}" if username else title or str(getattr(entity, "id", "unknown"))
+    return label, title or label
+
+
+async def find_joined_dialog(client: TelegramClient, value: str) -> Any | None:
+    lookup = value.strip().lower().lstrip("@")
+    async for dialog in client.iter_dialogs():
+        entity = dialog.entity
+        candidates = {
+            dialog.name.lower(),
+            str(getattr(entity, "id", "")).lower(),
+        }
+        username = getattr(entity, "username", None)
+        if username:
+            candidates.add(username.lower())
+            candidates.add(f"@{username.lower()}")
+        if lookup in candidates:
+            return entity
+    return None
+
+
+async def resolve_target(client: TelegramClient, raw_value: str) -> tuple[Any, str, str]:
+    invite_hash = extract_invite_hash(raw_value)
+    if invite_hash:
+        try:
+            invite_result = await client(ImportChatInviteRequest(invite_hash))
+        except UserAlreadyParticipantError:
+            invite_result = await client(CheckChatInviteRequest(invite_hash))
+            if isinstance(invite_result, ChatInviteAlready):
+                label, title = describe_entity(invite_result.chat)
+                return invite_result.chat, label, title
+            raise ValueError("이미 참여 중인 비공개 대화를 찾지 못했습니다.")
+        except (InviteHashInvalidError, InviteHashExpiredError) as error:
+            raise ValueError("비공개 초대 링크가 유효하지 않거나 만료되었습니다.") from error
+
+        chats = getattr(invite_result, "chats", None) or []
+        if chats:
+            label, title = describe_entity(chats[0])
+            return chats[0], label, title
+        raise ValueError("비공개 초대 링크에서 대화 정보를 찾지 못했습니다.")
+
+    normalized = normalize_channel(raw_value)
+    try:
+        entity = await client.get_entity(normalized)
+    except ValueError:
+        entity = await find_joined_dialog(client, raw_value)
+        if entity is None:
+            raise ValueError(
+                "대화를 찾지 못했습니다. 공개 채널이면 @username을, 비공개 방이면 초대 링크 또는 이미 참여 중인 정확한 대화 이름을 사용하세요."
+            ) from None
+
+    label, title = describe_entity(entity)
+    return entity, label, title
 
 
 async def login_if_needed(client: TelegramClient, phone: str) -> None:
@@ -118,8 +203,6 @@ async def collect_messages(args: argparse.Namespace) -> Path:
     api_id = int(get_env("TELEGRAM_API_ID"))
     api_hash = get_env("TELEGRAM_API_HASH")
     phone = get_env("TELEGRAM_PHONE")
-    channel_name = normalize_channel(args.channel)
-
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -130,14 +213,8 @@ async def collect_messages(args: argparse.Namespace) -> Path:
     await login_if_needed(client, phone)
 
     try:
-        try:
-            channel = await client.get_entity(channel_name)
-        except ValueError as error:
-            raise ValueError(
-                f"채널을 찾지 못했습니다: {channel_name}. username 또는 링크를 다시 확인하세요."
-            ) from error
-
-        print(f"채널 '{channel.title}' 에서 메시지를 수집합니다...")
+        channel, channel_label, channel_title = await resolve_target(client, args.channel)
+        print(f"채널 '{channel_title}' 에서 메시지를 수집합니다...")
 
         messages: list[dict[str, Any]] = []
         async for message in client.iter_messages(channel, limit=args.limit):
@@ -145,8 +222,9 @@ async def collect_messages(args: argparse.Namespace) -> Path:
 
         messages.reverse()
         payload = {
-            "channel": channel_name,
-            "channel_title": getattr(channel, "title", channel_name),
+            "channel": channel_label,
+            "channel_title": channel_title,
+            "channel_input": args.channel,
             "message_count": len(messages),
             "messages": messages,
         }

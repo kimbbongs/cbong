@@ -26,6 +26,7 @@ python telegram_collector.py
 ```
 
 수집 결과는 기본적으로 `data/telegram_messages.json` 파일에 저장됩니다.
+공개 채널 username뿐 아니라 `https://t.me/+초대코드` 같은 비공개 초대 링크도 사용할 수 있습니다.
 
 ## 대시보드 실행
 
